@@ -269,6 +269,7 @@ body.locked{overflow:hidden}
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" id="t-diario" aria-selected="true">Diario</button>
       <button class="tab" role="tab" id="t-dec" aria-selected="false">Decisiones e incidencias</button>
+      <button class="tab" role="tab" id="t-comp" aria-selected="false">Compras</button>
       <button class="tab" role="tab" id="t-proy" aria-selected="false">Proyecto</button>
     </div>
     <div id="view"><div class="sheet"><p class="notice">Cargando la bitácora…</p></div></div>
@@ -352,8 +353,8 @@ body.locked{overflow:hidden}
     const tab=(id,label,n)=>'<button class="gtab" role="tab" id="gt-'+id+'" aria-controls="gp-'+id+'" aria-selected="'+(t===id)+'" data-gtab="'+id+'">'+label+' <span class="gn">'+n+'</span></button>';
     const grid=(idx,id,empty)=>'<div class="gpanel" role="tabpanel" id="gp-'+id+'" aria-labelledby="gt-'+id+'"'+(t===id?'':' hidden')+'>'+(idx.length?'<div class="gal">'+idx.map((k,i)=>{const g=list[k];if(/^https?:/.test(g[0])) return '<figure><a class="thumb pdfcard" href="'+esc(g[0])+'" target="_blank" rel="noopener" aria-label="Abrir en Google Drive: '+esc(g[1])+'"><span class="pdfic">PDF</span><span class="pdfgo">Abrir en Drive ↗</span></a><figcaption><span class="pn">'+(id==="doc"?"Doc. ":"Foto ")+(i+1)+'</span> '+esc(g[1])+'</figcaption></figure>';
       return '<figure><button class="thumb" data-photo="'+k+'" aria-label="Ampliar foto '+(i+1)+'"><img src="'+esc(g[0])+'" alt="'+esc(g[1])+'" loading="lazy"></button><figcaption><span class="pn">'+(id==="doc"?"Doc. ":"Foto ")+(i+1)+'</span> '+esc(g[1])+'</figcaption></figure>'}).join("")+'</div>':'<p class="empty">'+empty+'</p>')+'</div>';
-    return '<div class="gtabs" role="tablist" aria-label="Tipo de foto">'+tab("obra","Trabajos de obra",ob.length)+'</div>'+
-      grid(ob,"obra","Sin fotos de trabajos para este día.");
+    return '<div class="gtabs" role="tablist" aria-label="Tipo de foto">'+tab("obra","Trabajos de obra",ob.length)+tab("doc","Documentación",dc.length)+'</div>'+
+      grid(ob,"obra","Sin fotos de trabajos para este día.")+grid(dc,"doc","Sin facturas ni conduces para este día.");
   }
   function openPhoto(k){
     const e=byDate[sel]; if(!e||!e.galeria||!e.galeria[k]) return;
@@ -388,6 +389,7 @@ body.locked{overflow:hidden}
         sec("Personal y equipos",table(["Grupo / equipo","Cant.","Observación"],e.personal,[1]))+
         sec("Actividades ejecutadas",table(["#","Frente / elemento","Actividad","Ejecutado por","Estado"],acts,[0]))+
         fold("Materiales recibidos y bote",(e.materiales||[]).length?(e.materiales.length+(e.materiales.length===1?" registro":" registros")):"Sin registro",table(["Concepto","Cantidad","Observación"],e.materiales),"No se recibió material.")+
+        fold("Compras y facturas",(e.compras||[]).length?(e.compras.length+(e.compras.length===1?" factura · ":" facturas · ")+money(e.compras.reduce((a,c)=>a+Number(c[5]||0),0))):"Sin facturas",compras(e.compras),"Sin facturas registradas para este día.")+
         sec("Incidencias y decisiones",ev,"Sin incidencias ni decisiones.")+
         (pend?sec("Pendientes",pend):"")+
         sec("Trabajos programados para el próximo día",prog,"Sin programación registrada.")+
@@ -436,9 +438,10 @@ body.locked{overflow:hidden}
   }
 
   function renderView(){
-    ["diario","dec","proy"].forEach(t=>$("t-"+t).setAttribute("aria-selected",String(tab===t&&!query.trim())));
+    ["diario","dec","comp","proy"].forEach(t=>$("t-"+t).setAttribute("aria-selected",String(tab===t&&!query.trim())));
     if(query.trim()) return renderSearch();
     if(tab==="dec") return renderDec();
+    if(tab==="comp") return renderCompras();
     if(tab==="proy") return renderProy();
     renderDay();
   }
@@ -495,7 +498,7 @@ body.locked{overflow:hidden}
   });
   $("prevM").onclick=()=>{calM--;if(calM<0){calM=11;calY--}renderCal()};
   $("nextM").onclick=()=>{calM++;if(calM>11){calM=0;calY++}renderCal()};
-  [["diario","t-diario"],["dec","t-dec"],["proy","t-proy"]].forEach(([t,id])=>$(id).onclick=()=>{tab=t;query="";$("q").value="";renderAll()});
+  [["diario","t-diario"],["dec","t-dec"],["comp","t-comp"],["proy","t-proy"]].forEach(([t,id])=>$(id).onclick=()=>{tab=t;query="";$("q").value="";renderAll()});
   let tmr; $("q").addEventListener("input",e=>{clearTimeout(tmr);tmr=setTimeout(()=>{query=e.target.value;renderAll()},120)});
 
   function init(data){
@@ -519,7 +522,9 @@ body.locked{overflow:hidden}
   async function unlock(pw){
     const key=await keyFrom(pw);
     const data=JSON.parse(new TextDecoder().decode(await dec(key,"datos.bin")));
-    const jobs=[];data.entradas.forEach(e=>(e.galeria||[]).forEach(g=>{const u=g[0];g[0]="";jobs.push(dec(key,u).then(buf=>{g[0]=URL.createObjectURL(new Blob([buf],{type:"image/jpeg"}))}).catch(()=>{}))}));
+    const cache={}; const get=u=>cache[u]||(cache[u]=dec(key,u).then(buf=>URL.createObjectURL(new Blob([buf],{type:"image/jpeg"}))).catch(()=>""));
+    const jobs=[];data.entradas.forEach(e=>{(e.galeria||[]).forEach(g=>{const u=g[0];g[0]="";jobs.push(get(u).then(x=>{g[0]=x}))});
+      (e.compras||[]).forEach(c=>{if(c[6]&&c[6].startsWith("enc/")){const u=c[6];c[6]="";jobs.push(get(u).then(x=>{c[6]=x}))}})});
     await Promise.all(jobs);
     return data;
   }
